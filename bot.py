@@ -1,6 +1,7 @@
 from aiogram import Bot, Dispatcher, types
 from aiogram.types import Message
 from aiogram.utils import executor
+from db import create_vpn_user
 import config
 import db
 
