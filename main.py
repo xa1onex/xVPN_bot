@@ -1,78 +1,83 @@
 import os
 import json
 import uuid
-import sqlite3
-import time
+import requests
 from aiogram import Bot, Dispatcher, types
-from aiogram.types import Message
-from aiogram.utils import executor
+from aiogram.filters import Command
+from aiogram.enums import ParseMode
 from dotenv import load_dotenv
 
-# Загрузка переменных из .env
 load_dotenv()
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-SERVER_IP = os.getenv("SERVER_IP")
-SERVER_PORT = os.getenv("SERVER_PORT", "443")
-PBK = os.getenv("PBK")
-SNI = os.getenv("SNI")
-DB_PATH = "/etc/x-ui/x-ui.db"
+PANEL_HOST = os.getenv("PANEL_HOST")
+REALITY_FALLBACK_SNI = os.getenv("SNI", "google.com")
 
-bot = Bot(token=BOT_TOKEN)
-dp = Dispatcher(bot)
+bot = Bot(BOT_TOKEN, parse_mode=ParseMode.HTML)
+dp = Dispatcher()
+session = requests.Session()
 
-def generate_vless_link(email: str, uuid_: str) -> str:
-    return f"vless://{uuid_}@{SERVER_IP}:{SERVER_PORT}/?type=tcp&security=reality&pbk={PBK}&fp=chrome&sni={SNI}&sid={uuid.uuid4().hex[:16]}&spx=%2F#{email}"
 
-@dp.message_handler(commands=["start"])
-async def start(msg: Message):
-    await msg.answer("Привет! Напиши /get, чтобы получить VPN-ссылку.")
+def get_client_link(username: str) -> str | None:
+    try:
+        response = session.get(f"{PANEL_HOST}/panel/api/inbounds/list")
+        response.raise_for_status()
+        data = response.json()
 
-@dp.message_handler(commands=["get"])
-async def get_vpn(msg: Message):
-    user_id = msg.from_user.id
-    username = msg.from_user.username or f"user{user_id}"
-    email = f"{username}_{user_id}_{int(time.time())}"
-    uuid_str = str(uuid.uuid4())
+        for inbound in data.get("obj", []):
+            if inbound.get("protocol") != "vless":
+                continue
 
-    # Подключение к SQLite
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
+            settings = json.loads(inbound.get("settings", "{}"))
+            clients = settings.get("clients", [])
 
-    cursor.execute("SELECT settings FROM inbounds WHERE protocol = 'vless'")
-    result = cursor.fetchone()
-    if not result:
-        await msg.answer("❌ VLESS inbound не найден.")
-        conn.close()
-        return
+            for client in clients:
+                if client.get("email") == username:
+                    client_id = client["id"]
 
-    settings_json = json.loads(result[0])
-    clients = settings_json.get("clients", [])
+                    stream_settings = json.loads(inbound.get("streamSettings", "{}"))
+                    reality = stream_settings.get("realitySettings", {})
 
-    # Проверка на дубликаты
-    if any(client.get("email") == email for client in clients):
-        await msg.answer("❗ Такой пользователь уже существует.")
-        conn.close()
-        return
+                    pbk = reality.get("settings", {}).get("publicKey")
+                    if not pbk:
+                        return None
 
-    new_client = {
-        "id": uuid_str,
-        "email": email,
-        "flow": "xtls-rprx-vision"
-    }
+                    address = inbound.get("listen") or inbound.get("address")
+                    port = inbound.get("port")
+                    sni = reality.get("serverNames", [REALITY_FALLBACK_SNI])[0]
+                    sid = reality.get("shortIds", ["random"])[0]
 
-    clients.append(new_client)
-    settings_json["clients"] = clients
+                    return (
+                        f"vless://{client_id}@{address}:{port}/"
+                        f"?type=tcp&security=reality&pbk={pbk}&fp=chrome"
+                        f"&sni={sni}&sid={sid}&spx=%2F&flow=xtls-rprx-vision"
+                        f"#vpn-{username}"
+                    )
+        return None
+    except Exception as e:
+        print("❌ Ошибка при получении ссылки:", e)
+        return None
 
-    new_settings_str = json.dumps(settings_json)
 
-    # Обновление базы
-    cursor.execute("UPDATE inbounds SET settings = ? WHERE protocol = 'vless'", (new_settings_str,))
-    conn.commit()
-    conn.close()
+@dp.message(Command("start"))
+async def cmd_start(message: types.Message):
+    await message.answer("Привет! Отправь команду /get чтобы получить свою VPN-ссылку.")
 
-    link = generate_vless_link(email, uuid_str)
-    await msg.answer(f"✅ Готово! Вот твоя ссылка:\n\n<code>{link}</code>", parse_mode="HTML")
+
+@dp.message(Command("get"))
+async def cmd_get(message: types.Message):
+    user_id = message.from_user.id
+    username = f"user_{user_id}"
+
+    link = get_client_link(username)
+
+    if link:
+        await message.answer(f"🔗 Ваша ссылка:\n<code>{link}</code>")
+    else:
+        await message.answer("❌ Клиент не найден в панели 3x-ui.\nВозможно, его нужно сначала добавить вручную или через бота.")
+
 
 if __name__ == "__main__":
+    import asyncio
+    from aiogram import executor
     executor.start_polling(dp, skip_updates=True)
