@@ -13,12 +13,11 @@ async def cmd_start(message: Message):
 
 @dp.message_handler(commands=["get"])
 async def cmd_get(message: Message):
-    # тут будет заглушка вместо оплатым
     result = await db.create_vpn_user(message.from_user.id)
     await message.answer(result)
 
+async def on_startup(dp):
+    await db.init_db()
+
 if __name__ == "__main__":
-    from db import init_db
-    import asyncio
-    asyncio.run(init_db())
-    executor.start_polling(dp)
+    executor.start_polling(dp, on_startup=on_startup)
