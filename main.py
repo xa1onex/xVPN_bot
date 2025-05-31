@@ -5,6 +5,7 @@ from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
 from aiogram.enums import ParseMode
 
+# 🛠 Настройки
 API_TOKEN = "7675630575:AAGgtMDc4OARX9qG7M50JWX2l3CvgbmK5EY"
 DB_PATH = "/etc/x-ui/x-ui.db"  # путь к базе данных 3x-ui
 SERVER_IP = "77.110.103.180"
@@ -28,18 +29,19 @@ def add_user_to_db(uuid_str: str, email: str):
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
 
-    # Найдём первый доступный inbound с VLESS
+    # Найти первый VLESS inbound
     cursor.execute("SELECT id FROM inbounds WHERE protocol = 'vless' LIMIT 1")
     row = cursor.fetchone()
     if not row:
         conn.close()
         raise Exception("VLESS inbound не найден")
+
     inbound_id = row[0]
 
-    # Добавим клиента
+    # Добавить клиента в таблицу `client`
     cursor.execute(
-        "INSERT INTO clients (id, inbound_id, email, uuid, alterId, enable, expiryTime, tgId) VALUES (NULL, ?, ?, ?, 0, 1, 0, '')",
-        (inbound_id, email, uuid_str)
+        "INSERT INTO client (enable, email, uuid, alterId, limitIp, totalGB, expiryTime, tgId, inbound_id) VALUES (1, ?, ?, 0, 0, 0, 0, '', ?)",
+        (email, uuid_str, inbound_id)
     )
 
     conn.commit()
@@ -64,6 +66,7 @@ async def handle_get(message: types.Message):
 
 async def main():
     await dp.start_polling(bot)
+
 
 if __name__ == "__main__":
     asyncio.run(main())
