@@ -1,83 +1,31 @@
-import os
-import json
-import uuid
-import requests
-from aiogram import Bot, Dispatcher, types
-from aiogram.filters import Command
-from aiogram.enums import ParseMode
-from dotenv import load_dotenv
+from datetime import datetime
 
-load_dotenv()
+from loader import bot, app_logger, scheduler
+import handlers  # noqa
+from telebot.custom_filters import StateFilter
+from utils.set_bot_commands import set_default_commands
+from database.models import create_models
+from config_data.config import ADMIN_ID
+from utils.tasks import check_and_revoke_keys, send_renewal_notifications
 
-BOT_TOKEN = os.getenv("7675630575:AAGgtMDc4OARX9qG7M50JWX2l3CvgbmK5EY")
-PANEL_HOST = os.getenv("http://77.110.103.180:2053/xAzd5OTnVG/")
-REALITY_FALLBACK_SNI = os.getenv("SNI", "google.com")
+if __name__ == '__main__':
+    create_models()
+    app_logger.debug("Подключение к базе данных...")
+    bot.add_custom_filter(StateFilter(bot))
+    set_default_commands(bot)
+    app_logger.info("Загрузка базовых команд...")
+    # Очистка всех задач
+    scheduler.remove_all_jobs()
 
-bot = Bot(BOT_TOKEN, parse_mode=ParseMode.HTML)
-dp = Dispatcher()
-session = requests.Session()
+    # Запуск проверки каждые 5 минут
+    scheduler.add_job(check_and_revoke_keys, 'interval', minutes=5, next_run_time=datetime.now())
+    scheduler.start()
+    app_logger.info("Запущен планировщик для проверки подписки пользователей и отзыва ключей.")
 
+    # Каждые 8 часов отправляем уведомления о продлении ключей
+    # scheduler.add_job(send_renewal_notifications, 'interval', hours=8, args=[scheduler], next_run_time=datetime.now())
+    # app_logger.info("Запущен планировщик для продления ключей.")
 
-def get_client_link(username: str) -> str | None:
-    try:
-        response = session.get(f"{PANEL_HOST}/panel/api/inbounds/list")
-        response.raise_for_status()
-        data = response.json()
-
-        for inbound in data.get("obj", []):
-            if inbound.get("protocol") != "vless":
-                continue
-
-            settings = json.loads(inbound.get("settings", "{}"))
-            clients = settings.get("clients", [])
-
-            for client in clients:
-                if client.get("email") == username:
-                    client_id = client["id"]
-
-                    stream_settings = json.loads(inbound.get("streamSettings", "{}"))
-                    reality = stream_settings.get("realitySettings", {})
-
-                    pbk = reality.get("settings", {}).get("publicKey")
-                    if not pbk:
-                        return None
-
-                    address = inbound.get("listen") or inbound.get("address")
-                    port = inbound.get("port")
-                    sni = reality.get("serverNames", [REALITY_FALLBACK_SNI])[0]
-                    sid = reality.get("shortIds", ["random"])[0]
-
-                    return (
-                        f"vless://{client_id}@{address}:{port}/"
-                        f"?type=tcp&security=reality&pbk={pbk}&fp=chrome"
-                        f"&sni={sni}&sid={sid}&spx=%2F&flow=xtls-rprx-vision"
-                        f"#vpn-{username}"
-                    )
-        return None
-    except Exception as e:
-        print("❌ Ошибка при получении ссылки:", e)
-        return None
-
-
-@dp.message(Command("start"))
-async def cmd_start(message: types.Message):
-    await message.answer("Привет! Отправь команду /get чтобы получить свою VPN-ссылку.")
-
-
-@dp.message(Command("get"))
-async def cmd_get(message: types.Message):
-    user_id = message.from_user.id
-    username = f"user_{user_id}"
-
-    link = get_client_link(username)
-
-    if link:
-        await message.answer(f"🔗 Ваша ссылка:\n<code>{link}</code>")
-    else:
-        await message.answer("❌ Клиент не найден в панели 3x-ui.\nВозможно, его нужно сначала добавить вручную или через бота.")
-
-
-if __name__ == "__main__":
-    import asyncio
-    from aiogram import executor
-    executor.start_polling(dp, skip_updates=True)
+    app_logger.info(f"Бот @{bot.get_me().username} запущен.")
+    bot.send_message(ADMIN_ID, "Бот запущен.")
+    bot.infinity_polling()
