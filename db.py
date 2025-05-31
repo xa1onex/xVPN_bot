@@ -3,10 +3,19 @@ import config
 import uuid
 from datetime import datetime, timedelta
 
+DB_PATH = "xvpn.db"
+
 async def init_db():
-    # можно добавить проверку подкалючения к SQLite
-    async with aiosqlite.connect(config.XUI_DB_PATH) as db:
-        pass  # SQLite создается заранее, не нужно ничего создавать
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS client (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                telegram_id INTEGER UNIQUE,
+                username TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        await db.commit()
 
 async def create_vpn_user(tg_user_id):
     user_id = str(uuid.uuid4())
