@@ -1,218 +1,69 @@
-import os
-import logging
-from aiogram import Bot, Dispatcher, types
-from aiogram.contrib.fsm_storage.memory import MemoryStorage
-from aiogram.dispatcher import filters
-from aiogram.utils import executor
-from dotenv import load_dotenv
-import qrcode
-import io
-import requests
-from datetime import datetime, timedelta
+import asyncio
 import uuid
-from database import Database
+import sqlite3
+from aiogram import Bot, Dispatcher, types
+from aiogram.filters import Command
+from aiogram.enums import ParseMode
 
-# Загрузка конфигурации
-load_dotenv()
+API_TOKEN = "7675630575:AAGgtMDc4OARX9qG7M50JWX2l3CvgbmK5EY"
+DB_PATH = "/etc/x-ui/x-ui.db"  # путь к базе данных 3x-ui
+SERVER_IP = "77.110.103.180"
+PORT = 443  # Порт VLESS
+FLOW = "xtls-rprx-vision"
+TLS = "tls"
 
-# Инициализация
-bot = Bot(token=os.getenv('BOT_TOKEN'))
-storage = MemoryStorage()
-dp = Dispatcher(bot, storage=storage)
-db = Database()
-
-
-# Получение значений с обработкой отсутствия
-def get_env_int(name, default):
-    value = os.getenv(name)
-    return int(value) if value and value.isdigit() else default
+bot = Bot(token=API_TOKEN)
+dp = Dispatcher()
 
 
-class XUI:
-    """Класс для работы с 3XUI API"""
-
-    def __init__(self):
-        self.base_url = os.getenv('XUI_PANEL_URL')
-        if not self.base_url:
-            raise ValueError("XUI_PANEL_URL не установлен в .env")
-
-        self.session = requests.Session()
-        self.session.verify = os.getenv('XUI_SSL_VERIFY') == 'True'
-        self._login()
-
-    def _login(self):
-        """Авторизация в панели"""
-        login_url = f"{self.base_url}/login"
-        data = {
-            "username": os.getenv('XUI_USERNAME') or 'admin',
-            "password": os.getenv('XUI_PASSWORD') or 'admin'
-        }
-        try:
-            response = self.session.post(login_url, data=data)
-            response.raise_for_status()
-            logging.info("Успешная авторизация в 3XUI")
-        except Exception as e:
-            logging.error(f"Ошибка авторизации в 3XUI: {e}")
-            raise
-
-    def create_client(self, days: int = 30, limit: int = 2) -> dict:
-        """Создание нового клиента"""
-        client_url = f"{self.base_url}/api/inbounds/addClient"
-        expiry_date = (datetime.now() + timedelta(days=days)).strftime('%Y-%m-%d')
-
-        data = {
-            "inboundId": 1,  # ID вашего инбаунда
-            "enable": True,
-            "email": f"{uuid.uuid4()}@vpn.bot",
-            "expiryTime": expiry_date,
-            "limitIp": limit,
-            "totalGB": 0,  # 0 = безлимит
-            "enable": True
-        }
-
-        try:
-            response = self.session.post(client_url, json=data)
-            response.raise_for_status()
-            return response.json()
-        except Exception as e:
-            logging.error(f"Ошибка создания клиента: {e}")
-            logging.error(f"Ответ сервера: {response.text if 'response' in locals() else ''}")
-            raise
-
-    def get_client_config(self, client_id: str) -> str:
-        """Получение конфигурации клиента"""
-        config_url = f"{self.base_url}/api/inbounds/getClientTraffics/{client_id}"
-        try:
-            response = self.session.get(config_url)
-            response.raise_for_status()
-            data = response.json()
-            return data.get('obj', data).get('config', '')
-        except Exception as e:
-            logging.error(f"Ошибка получения конфигурации: {e}")
-            raise
+def generate_uuid():
+    return str(uuid.uuid4())
 
 
-try:
-    xui = XUI()
-except Exception as e:
-    logging.error(f"Не удалось инициализировать XUI: {e}")
-    xui = None
+def get_vless_link(user_uuid, server_ip, port, flow, tls, name):
+    return f"vless://{user_uuid}@{server_ip}:{port}?type=ws&security={tls}&encryption=none&flow={flow}#{name}"
 
 
-def generate_qr(config: str) -> bytes:
-    """Генерация QR-кода"""
-    img = qrcode.make(config)
-    byte_arr = io.BytesIO()
-    img.save(byte_arr, format='PNG')
-    return byte_arr.getvalue()
+def add_user_to_db(uuid_str: str, email: str):
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
 
+    # Найдём первый доступный inbound с VLESS
+    cursor.execute("SELECT id FROM inbounds WHERE protocol = 'vless' LIMIT 1")
+    row = cursor.fetchone()
+    if not row:
+        conn.close()
+        raise Exception("VLESS inbound не найден")
+    inbound_id = row[0]
 
-@dp.message_handler(commands=['start'])
-async def start(message: types.Message):
-    """Обработчик команды /start"""
-    user = message.from_user
-    db.add_user(user.id, user.username, user.full_name)
-
-    await message.answer(
-        "🔐 <b>VPN Bot</b>\n\n"
-        "Доступные команды:\n"
-        "/get_vpn - Получить VPN конфиг\n"
-        "/my_vpns - Мои подключения\n"
-        "/help - Помощь",
-        parse_mode="HTML"
+    # Добавим клиента
+    cursor.execute(
+        "INSERT INTO clients (id, inbound_id, email, uuid, alterId, enable, expiryTime, tgId) VALUES (NULL, ?, ?, ?, 0, 1, 0, '')",
+        (inbound_id, email, uuid_str)
     )
 
+    conn.commit()
+    conn.close()
 
-@dp.message_handler(commands=['get_vpn'])
-async def get_vpn(message: types.Message):
-    """Создание нового VPN подключения"""
-    if not xui:
-        await message.answer("⚠️ Сервис временно недоступен. Попробуйте позже.")
-        return
 
+@dp.message(Command("get"))
+async def handle_get(message: types.Message):
     try:
-        # Получаем значения с обработкой по умолчанию
-        days = get_env_int('DEFAULT_DAYS', 30)
-        limit = get_env_int('DEFAULT_DEVICE_LIMIT', 2)
+        user_id = message.from_user.id
+        user_uuid = generate_uuid()
+        email = f"user_{user_id}"
 
-        # Создаем клиента в 3XUI
-        client = xui.create_client(days=days, limit=limit)
+        add_user_to_db(user_uuid, email)
 
-        # Получаем конфигурацию
-        client_id = client.get('id') or client.get('obj', {}).get('id')
-        if not client_id:
-            logging.error(f"Не удалось получить ID клиента: {client}")
-            raise ValueError("Неверный ответ от 3XUI API")
+        vless_link = get_vless_link(user_uuid, SERVER_IP, PORT, FLOW, TLS, email)
+        await message.answer(f"🎉 Ваш VLESS VPN доступ:\n\n<code>{vless_link}</code>", parse_mode=ParseMode.HTML)
 
-        config = xui.get_client_config(client_id)
-
-        # Сохраняем в БД
-        vpn_id = db.create_vpn_account(message.from_user.id, config, days)
-
-        # Генерируем QR-код
-        qr_code = generate_qr(config)
-
-        # Отправляем пользователю
-        await message.answer_photo(
-            photo=qr_code,
-            caption=f"<b>✅ Ваш VPN аккаунт создан!</b>\n\n"
-                    f"ID: <code>{vpn_id}</code>\n"
-                    f"Срок действия: {days} дней\n"
-                    f"Лимит устройств: {limit}\n\n"
-                    f"<b>Конфигурация:</b>\n<code>{config}</code>",
-            parse_mode="HTML"
-        )
     except Exception as e:
-        logging.error(f"Error creating VPN: {e}")
-        await message.answer("⚠️ Произошла ошибка при создании VPN. Попробуйте позже.")
+        await message.answer(f"⚠️ Ошибка: {e}")
 
 
-@dp.message_handler(commands=['my_vpns'])
-async def list_vpns(message: types.Message):
-    """Список всех VPN пользователя"""
-    accounts = db.get_user_accounts(message.from_user.id)
+async def main():
+    await dp.start_polling(bot)
 
-    if not accounts:
-        await message.answer("У вас нет активных VPN подключений.")
-        return
-
-    text = ["<b>Ваши VPN подключения:</b>\n"]
-    for acc in accounts:
-        status = "🟢 Активен" if acc[3] else "🔴 Неактивен"
-        text.append(
-            f"\nID: <code>{acc[0]}</code>\n"
-            f"Статус: {status}\n"
-            f"Истекает: {acc[2]}\n"
-            f"/revoke_{acc[0]} - Отозвать"
-        )
-
-    await message.answer("\n".join(text), parse_mode="HTML")
-
-
-@dp.message_handler(filters.RegexpCommandsFilter(regexp_commands=['/revoke_(.*)']))
-async def revoke_vpn(message: types.Message, regexp_command):
-    """Отзыв VPN подключения"""
-    vpn_id = regexp_command.group(1)
-    db.revoke_vpn_account(vpn_id)
-    await message.answer(f"VPN подключение <code>{vpn_id}</code> отозвано.", parse_mode="HTML")
-
-
-@dp.message_handler(commands=['help'])
-async def help_command(message: types.Message):
-    """Помощь"""
-    await message.answer(
-        "<b>Помощь по боту:</b>\n\n"
-        "1. <b>/get_vpn</b> - создать новое VPN подключение\n"
-        "2. <b>/my_vpns</b> - список ваших подключений\n"
-        "3. <b>/revoke_ID</b> - отозвать подключение\n\n"
-        "По вопросам пишите @ваш_аккаунт",
-        parse_mode="HTML"
-    )
-
-
-if __name__ == '__main__':
-    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-    try:
-        executor.start_polling(dp, skip_updates=True)
-    finally:
-        db.close()
+if __name__ == "__main__":
+    asyncio.run(main())
