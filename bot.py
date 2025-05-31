@@ -11,10 +11,15 @@ dp = Dispatcher(bot)
 async def cmd_start(message: Message):
     await message.answer("Привет! Я выдам тебе VPN-доступ. Напиши /get")
 
-@dp.message_handler(commands=["get"])
-async def cmd_get(message: Message):
-    result = await db.create_vpn_user(message.from_user.id)
-    await message.answer(result)
+@dp.message_handler(commands=['get'])
+async def cmd_get(message: types.Message):
+    email = await create_vpn_user(message.from_user.id)
+
+    domain = "xdouble.duckdns.org"
+    uuid_str = email.split('-')[1].split('@')[0]  # генерация UUID по шаблону
+    vpn_link = f"vless://{uuid_str}@{domain}:443?encryption=none&security=tls&type=ws#xVPN"
+
+    await message.reply(f"✅ Вот ваш VPN-доступ на 3 дня:\n\n{vpn_link}")
 
 async def on_startup(dp):
     await db.init_db()
