@@ -46,7 +46,7 @@ def bot_start(message: Message):
                                                        f"Рады приветствовать вас на нашем сервисе!\n"
                                                        f"Что бы использовать наш VPN сервис, "
                                                        f"следуйте инструкциям ниже 👇\n"
-                                                       f"{'\n'.join(commands)}",
+                                                       f"{''.join(commands)}",
                                  reply_markup=handlers_reply())
                 cur_user = User.get(User.user_id == message.from_user.id)
                 cur_user.is_subscribed = True
