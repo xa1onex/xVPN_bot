@@ -22,7 +22,7 @@ bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(bot)
 
 def generate_vless_link(email: str, uuid_: str) -> str:
-    return f"vless://{uuid_}@{SERVER_IP}:{SERVER_PORT}/?type=tcp&security=reality&pbk={PBK}&fp=chrome&sni={SNI}&sid={uuid.uuid4().hex[:16]}&spx=%2F&flow=xtls-rprx-vision#{email}"
+    return f"vless://{uuid_}@{SERVER_IP}:{SERVER_PORT}/?type=tcp&security=reality&pbk={PBK}&fp=chrome&sni={SNI}&sid={uuid.uuid4().hex[:16]}&spx=%2F#{email}"
 
 @dp.message_handler(commands=["start"])
 async def start(msg: Message):
