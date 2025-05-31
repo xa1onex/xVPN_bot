@@ -1,84 +1,78 @@
-import asyncio
+import os
+import json
 import uuid
 import sqlite3
-import json
+import time
 from aiogram import Bot, Dispatcher, types
-from aiogram.filters import Command
-from aiogram.enums import ParseMode
+from aiogram.types import Message
+from aiogram.utils import executor
+from dotenv import load_dotenv
 
-# 🛠 Настройки
-API_TOKEN = "7675630575:AAGgtMDc4OARX9qG7M50JWX2l3CvgbmK5EY"
-DB_PATH = "/etc/x-ui/x-ui.db"  # путь к базе данных 3x-ui
-SERVER_IP = "77.110.103.180"
-PORT = 443  # Порт VLESS
-FLOW = "xtls-rprx-vision"
-TLS = "tls"
+# Загрузка переменных из .env
+load_dotenv()
 
-bot = Bot(token=API_TOKEN)
-dp = Dispatcher()
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+SERVER_IP = os.getenv("SERVER_IP")
+SERVER_PORT = os.getenv("SERVER_PORT", "443")
+PBK = os.getenv("PBK")
+SNI = os.getenv("SNI")
+DB_PATH = "/etc/x-ui/x-ui.db"
 
+bot = Bot(token=BOT_TOKEN)
+dp = Dispatcher(bot)
 
-def generate_uuid():
-    return str(uuid.uuid4())
+def generate_vless_link(email: str, uuid_: str) -> str:
+    return f"vless://{uuid_}@{SERVER_IP}:{SERVER_PORT}/?type=tcp&security=reality&pbk={PBK}&fp=chrome&sni={SNI}&sid={uuid.uuid4().hex[:16]}&spx=%2F&flow=xtls-rprx-vision#{email}"
 
+@dp.message_handler(commands=["start"])
+async def start(msg: Message):
+    await msg.answer("Привет! Напиши /get, чтобы получить VPN-ссылку.")
 
-def get_vless_link(user_uuid, server_ip, port, flow, tls, name):
-    return f"vless://{user_uuid}@77.110.103.180:443/?type=tcp&security=reality&pbk=none&fp=chrome&sni=google.com&sid=78c115b2e4b1a7&spx=%2F#xVPN"
+@dp.message_handler(commands=["get"])
+async def get_vpn(msg: Message):
+    user_id = msg.from_user.id
+    username = msg.from_user.username or f"user{user_id}"
+    email = f"{username}_{user_id}_{int(time.time())}"
+    uuid_str = str(uuid.uuid4())
 
-
-def add_user_to_inbound(uuid_str: str, email: str):
+    # Подключение к SQLite
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
 
-    # Найдём первый inbound с VLESS
-    cursor.execute("SELECT id, settings FROM inbounds WHERE protocol = 'vless' LIMIT 1")
-    row = cursor.fetchone()
-    if not row:
+    cursor.execute("SELECT settings FROM inbounds WHERE protocol = 'vless'")
+    result = cursor.fetchone()
+    if not result:
+        await msg.answer("❌ VLESS inbound не найден.")
         conn.close()
-        raise Exception("VLESS inbound не найден")
+        return
 
-    inbound_id, settings_json = row
-    settings = json.loads(settings_json)
+    settings_json = json.loads(result[0])
+    clients = settings_json.get("clients", [])
 
-    # Добавим клиента в JSON
+    # Проверка на дубликаты
+    if any(client.get("email") == email for client in clients):
+        await msg.answer("❗ Такой пользователь уже существует.")
+        conn.close()
+        return
+
     new_client = {
         "id": uuid_str,
         "email": email,
-        "flow": FLOW
+        "flow": "xtls-rprx-vision"
     }
 
-    if "clients" not in settings:
-        settings["clients"] = []
+    clients.append(new_client)
+    settings_json["clients"] = clients
 
-    settings["clients"].append(new_client)
+    new_settings_str = json.dumps(settings_json)
 
-    # Обновим запись
-    new_settings_json = json.dumps(settings)
-    cursor.execute("UPDATE inbounds SET settings = ? WHERE id = ?", (new_settings_json, inbound_id))
+    # Обновление базы
+    cursor.execute("UPDATE inbounds SET settings = ? WHERE protocol = 'vless'", (new_settings_str,))
     conn.commit()
     conn.close()
 
-
-@dp.message(Command("get"))
-async def handle_get(message: types.Message):
-    try:
-        user_id = message.from_user.id
-        username = message.from_user.username or f"user{user_id}"
-        user_uuid = generate_uuid()
-        email = f"{username}_{user_id}"
-
-        add_user_to_inbound(user_uuid, email)
-
-        vless_link = get_vless_link(user_uuid, SERVER_IP, PORT, FLOW, TLS, email)
-        await message.answer(f"🎉 Ваш VLESS VPN доступ:\n\n<code>{vless_link}</code>", parse_mode=ParseMode.HTML)
-
-    except Exception as e:
-        await message.answer(f"⚠️ Ошибка: {e}")
-
-
-async def main():
-    await dp.start_polling(bot)
-
+    link = generate_vless_link(email, uuid_str)
+    await msg.answer(f"✅ Готово! Вот твоя ссылка:\n\n<code>{link}</code>", parse_mode="HTML")
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    executor.start_polling(dp, skip_updates=True)
