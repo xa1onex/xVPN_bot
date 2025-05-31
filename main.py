@@ -25,25 +25,35 @@ def get_vless_link(user_uuid, server_ip, port, flow, tls, name):
     return f"vless://{user_uuid}@{server_ip}:{port}?type=ws&security={tls}&encryption=none&flow={flow}#{name}"
 
 
-def add_user_to_db(uuid_str: str, email: str):
+def add_user_to_inbound(uuid_str: str, email: str):
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
 
-    # Найти первый VLESS inbound
-    cursor.execute("SELECT id FROM inbounds WHERE protocol = 'vless' LIMIT 1")
+    # Найдём первый inbound с VLESS
+    cursor.execute("SELECT id, settings FROM inbounds WHERE protocol = 'vless' LIMIT 1")
     row = cursor.fetchone()
     if not row:
         conn.close()
         raise Exception("VLESS inbound не найден")
 
-    inbound_id = row[0]
+    inbound_id, settings_json = row
+    settings = json.loads(settings_json)
 
-    # Добавить клиента в таблицу `client`
-    cursor.execute(
-        "INSERT INTO client (enable, email, uuid, alterId, limitIp, totalGB, expiryTime, tgId, inbound_id) VALUES (1, ?, ?, 0, 0, 0, 0, '', ?)",
-        (email, uuid_str, inbound_id)
-    )
+    # Добавим клиента в JSON
+    new_client = {
+        "id": uuid_str,
+        "email": email,
+        "flow": FLOW
+    }
 
+    if "clients" not in settings:
+        settings["clients"] = []
+
+    settings["clients"].append(new_client)
+
+    # Обновим запись
+    new_settings_json = json.dumps(settings)
+    cursor.execute("UPDATE inbounds SET settings = ? WHERE id = ?", (new_settings_json, inbound_id))
     conn.commit()
     conn.close()
 
@@ -52,10 +62,11 @@ def add_user_to_db(uuid_str: str, email: str):
 async def handle_get(message: types.Message):
     try:
         user_id = message.from_user.id
+        username = message.from_user.username or f"user{user_id}"
         user_uuid = generate_uuid()
-        email = f"user_{user_id}"
+        email = f"{username}_{user_id}"
 
-        add_user_to_db(user_uuid, email)
+        add_user_to_inbound(user_uuid, email)
 
         vless_link = get_vless_link(user_uuid, SERVER_IP, PORT, FLOW, TLS, email)
         await message.answer(f"🎉 Ваш VLESS VPN доступ:\n\n<code>{vless_link}</code>", parse_mode=ParseMode.HTML)
