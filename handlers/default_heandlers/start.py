@@ -90,7 +90,7 @@ def is_subscribed_handler(call):
         bot.answer_callback_query(callback_query_id=call.id)
         bot.send_message(call.message.chat.id, "Спасибо, что выбрали наш сервис, приятного использования!\n"
                                                f"Вам доступны следующие команды:\n"
-                                               f"{'\n'.join(commands)}")
+                                               f"{''.join(commands)}")
         bot.set_state(call.message.chat.id, None)
     else:
         bot.answer_callback_query(callback_query_id=call.id)
