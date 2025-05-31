@@ -9,8 +9,8 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-PANEL_HOST = os.getenv("PANEL_HOST")
+BOT_TOKEN = os.getenv("7675630575:AAGgtMDc4OARX9qG7M50JWX2l3CvgbmK5EY")
+PANEL_HOST = os.getenv("http://77.110.103.180:2053/xAzd5OTnVG/")
 REALITY_FALLBACK_SNI = os.getenv("SNI", "google.com")
 
 bot = Bot(BOT_TOKEN, parse_mode=ParseMode.HTML)
