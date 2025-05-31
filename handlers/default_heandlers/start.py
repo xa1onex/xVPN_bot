@@ -36,7 +36,7 @@ def bot_start(message: Message):
             bot.send_message(
                 message.from_user.id,
                 f"Здравствуйте, {message.from_user.full_name}! 👋\n"
-                f"Вы вошли как администратор. Доступны следующие команды:\n{'\n'.join(commands)}",
+                f"Вы вошли как администратор. Доступны следующие команды: {'\n'.join(commands)}",
                 reply_markup=handlers_reply()
             )
         else:
