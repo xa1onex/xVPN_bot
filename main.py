@@ -101,7 +101,7 @@ async def get_vpn(message: types.Message):
         # Создаем клиента в 3XUI
         client = xui.create_client(
             days=int(os.getenv('DEFAULT_DAYS')),
-            limit=int(os.getenv('DEFAULT_DEVICE_LIMIT'))
+            limit=int(os.getenv('DEFAULT_DEVICE_LIMIT')))
 
         # Получаем конфигурацию
         config = xui.get_client_config(client['id'])
