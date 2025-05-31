@@ -23,7 +23,8 @@ def generate_uuid():
 
 
 def get_vless_link(user_uuid, server_ip, port, flow, tls, name):
-    return f"vless://{user_uuid}@{server_ip}:{port}/?type=tcp&security=reality&pbk=none&fp={flow}#{name}"
+    return f"vless://{user_uuid}@77.110.103.180:443/?type=tcp&security=reality&pbk=none&fp=chrome&sni=google.com&sid=78c115b2e4b1a7&spx=%2F#xVPN"
+
 
 def add_user_to_inbound(uuid_str: str, email: str):
     conn = sqlite3.connect(DB_PATH)
