@@ -1,99 +1,108 @@
-import asyncio
-import json
 import uuid
-from aiohttp import ClientSession, CookieJar
+import httpx
+import asyncio
 from aiogram import Bot, Dispatcher, F
 from aiogram.types import Message
 from aiogram.enums import ParseMode
-from aiogram.client.default import DefaultBotProperties
+from aiogram.filters import Command
+from dotenv import load_dotenv
+import os
 
-API_BASE = "http://77.110.103.180:2053/xAzd5OTnVG"
-USERNAME = "admin"
-PASSWORD = "admin"
-VLESS_HOST = "77.110.103.180"
-VLESS_PORT = 443
-PBK = "9Hdy5jR2MNBB-vxtu1bOl4SHpiLgTWlEqgDD8ZGf2hk"
-SNI = "yahoo.com"
+load_dotenv()
 
-BOT_TOKEN = "7675630575:AAGgtMDc4OARX9qG7M50JWX2l3CvgbmK5EY"
-
-bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+bot = Bot(token=os.getenv("BOT_TOKEN"))
 dp = Dispatcher()
 
-async def login(session: ClientSession):
-    url = f"{API_BASE}/login"
-    payload = {"username": USERNAME, "password": PASSWORD}
-    async with session.post(url, json=payload) as resp:
-        data = await resp.json()
-        if not data["success"]:
-            raise Exception("Login failed")
+XUI_URL = os.getenv("XUI_BASE_URL")
+XUI_USER = os.getenv("XUI_USERNAME")
+XUI_PASS = os.getenv("XUI_PASSWORD")
 
-async def add_user(session: ClientSession, email: str):
-    await login(session)
-    user_id = str(uuid.uuid4())
-    payload = {
-        "id": None,
-        "up": 0,
-        "down": 0,
-        "total": 0,
-        "remark": email,
+HEADERS = {"Content-Type": "application/json"}
+
+
+async def xui_login():
+    async with httpx.AsyncClient(base_url=XUI_URL, follow_redirects=True) as client:
+        resp = await client.post("/login", data={"username": XUI_USER, "password": XUI_PASS})
+        if "Set-Cookie" not in resp.headers:
+            raise Exception("Не удалось авторизоваться в 3x-ui")
+        return client
+
+
+async def create_vless_user(telegram_id: int):
+    client = await xui_login()
+    user_uuid = str(uuid.uuid4())
+    user_tag = f"user_{telegram_id}"
+    short_id = uuid.uuid4().hex[:8]
+
+    # Параметры конфигурации
+    data = {
         "enable": True,
-        "expiryTime": 0,
+        "remark": user_tag,
         "listen": "",
-        "port": VLESS_PORT,
+        "port": 443,
         "protocol": "vless",
-        "settings": json.dumps({
+        "settings": {
             "clients": [
                 {
-                    "id": user_id,
-                    "email": email
+                    "id": user_uuid,
+                    "flow": "xtls-rprx-vision",
+                    "email": user_tag
                 }
             ],
             "decryption": "none",
             "fallbacks": []
-        }),
-        "streamSettings": json.dumps({
+        },
+        "streamSettings": {
             "network": "tcp",
             "security": "reality",
             "realitySettings": {
                 "show": False,
+                "dest": "yahoo.com:443",
+                "xver": 0,
+                "serverNames": ["yahoo.com"],
                 "fingerprint": "chrome",
-                "serverName": SNI,
-                "publicKey": PBK,
-                "shortId": "",
+                "publicKey": "9Hdy5jR2MNBB-vxtu1bOl4SHpiLgTWlEqgDD8ZGf2hk",
+                "shortId": short_id,
                 "spiderX": "/"
             }
-        }),
-        "sniffing": json.dumps({
+        },
+        "sniffing": {
             "enabled": True,
             "destOverride": ["http", "tls"]
-        })
+        }
     }
 
-    url = f"{API_BASE}/inbound/add"
-    async with session.post(url, json=payload) as resp:
-        result = await resp.json()
-        if result["success"]:
-            return f"vless://{user_id}@{VLESS_HOST}:{VLESS_PORT}/?type=tcp&security=reality&pbk={PBK}&fp=chrome&sni={SNI}&sid=&spx=%2F#{email}"
-        else:
-            raise Exception("Failed to add user")
+    resp = await client.post("/xui/inbound/add", json=data)
+    if resp.status_code != 200:
+        raise Exception(f"Ошибка при создании пользователя: {resp.text}")
+
+    link = (
+        f"vless://{user_uuid}@77.110.103.180:443/?type=tcp"
+        f"&security=reality"
+        f"&pbk=9Hdy5jR2MNBB-vxtu1bOl4SHpiLgTWlEqgDD8ZGf2hk"
+        f"&fp=chrome"
+        f"&sni=yahoo.com"
+        f"&sid={short_id}"
+        f"&spx=%2F"
+        f"&flow=xtls-rprx-vision"
+        f"#{user_tag}"
+    )
+
+    return link
+
+
+@dp.message(Command("get"))
+async def handle_get(message: Message):
+    await message.answer("⏳ Генерирую ссылку, подожди секунду...")
+    try:
+        link = await create_vless_user(message.from_user.id)
+        await message.answer(f"✅ Готово! Вот твоя ссылка:\n<code>{link}</code>", parse_mode=ParseMode.HTML)
+    except Exception as e:
+        await message.answer(f"❌ Ошибка: {e}")
+
 
 async def main():
-    session = ClientSession(cookie_jar=CookieJar())
-
-    @dp.message(F.text == "/get")
-    async def get_vpn(message: Message):
-        try:
-            email = f"tg_{message.from_user.id}"
-            link = await add_user(session, email)
-            await message.answer(f"✅ Вот твоя ссылка:\n<code>{link}</code>")
-        except Exception as e:
-            await message.answer(f"❌ Ошибка: {e}")
-
-    try:
-        await dp.start_polling(bot)
-    finally:
-        await session.close()
+    await dp.start_polling(bot)
 
 if __name__ == "__main__":
     asyncio.run(main())
