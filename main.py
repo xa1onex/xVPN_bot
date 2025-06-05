@@ -1,5 +1,5 @@
 from py3xui import Api
-from py3xui.models import Client
+from py3xui.schemas import Client
 import uuid
 
 # Настройки
