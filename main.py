@@ -3,6 +3,7 @@ import json
 import uuid
 import time
 from aiogram import Bot, Dispatcher, types
+from aiogram.enums import ParseMode
 from aiohttp import ClientSession
 
 # === НАСТРОЙКИ ===
@@ -10,16 +11,23 @@ BOT_TOKEN = '7675630575:AAGgtMDc4OARX9qG7M50JWX2l3CvgbmK5EY'
 XUI_API_URL = 'http://77.110.103.180:2053/xAzd5OTnVG/'
 XUI_USERNAME = 'admin'
 XUI_PASSWORD = 'admin'
-INBOUND_ID = 1  # ID VLESS-инбунда в x-ui
+INBOUND_ID = 1  # ID твоего VLESS + Reality инбунда
 
+# === Reality параметры ===
+REALITY_PUBLIC_KEY = '9Hdy5jR2MNBB-vxtu1bOl4SHpiLgTWlEqgDD8ZGf2hk'
+REALITY_SNI = 'yahoo.com'
+REALITY_SID = 'c5b0fb2c88'
+REALITY_SPX = '/'  # путь, обычно просто /
 
-# === Авторизация и создание сессии ===
 class XUIClient:
     def __init__(self):
         self.token = None
-        self.session = ClientSession()
+        self.session = None
 
     async def login(self):
+        if self.session is None:
+            self.session = ClientSession()
+
         url = f"{XUI_API_URL}/login"
         payload = {"username": XUI_USERNAME, "password": XUI_PASSWORD}
         async with self.session.post(url, json=payload) as resp:
@@ -32,6 +40,11 @@ class XUIClient:
         get_url = f"{XUI_API_URL}/xui/inbound/get/{INBOUND_ID}"
         async with self.session.get(get_url, headers=headers) as r:
             inbound = (await r.json())["obj"]
+
+        # Проверяем публичный IP
+        server_ip = inbound["listen"]
+        if server_ip in ["0.0.0.0", "127.0.0.1", "::"]:
+            server_ip = "77.110.103.180"  # ← сюда подставь свой внешний IP или домен
 
         new_uuid = str(uuid.uuid4())
         client_data = {
@@ -63,25 +76,22 @@ class XUIClient:
         return {
             "uuid": new_uuid,
             "port": inbound["port"],
-            "host": inbound["listen"],
+            "host": server_ip,
             "email": email
         }
 
     async def close(self):
-        await self.session.close()
+        if self.session:
+            await self.session.close()
 
 
-# === Бот ===
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
-
 xui = XUIClient()
-
 
 @dp.message(commands=["start", "help"])
 async def welcome(msg: types.Message):
-    await msg.answer("Привет! Напиши /get чтобы получить VPN-доступ.")
-
+    await msg.answer("👋 Привет! Напиши /get, чтобы получить доступ к VPN.")
 
 @dp.message(commands=["get"])
 async def get_access(msg: types.Message):
@@ -91,22 +101,20 @@ async def get_access(msg: types.Message):
         vless_link = (
             f"vless://{user_data['uuid']}@{user_data['host']}:{user_data['port']}"
             f"/?type=tcp&security=reality"
-            f"&pbk=9Hdy5jR2MNBB-vxtu1bOl4SHpiLgTWlEqgDD8ZGf2hk"
-            f"&fp=chrome&sni=yahoo.com"
-            f"&sid=c5b0fb2c88&spx=%2F"
+            f"&pbk={REALITY_PUBLIC_KEY}"
+            f"&fp=chrome&sni={REALITY_SNI}"
+            f"&sid={REALITY_SID}&spx=%2F"
             f"#{user_data['email']}"
         )
-        await msg.answer(f"Вот твоя ссылка:\n\n`{vless_link}`", parse_mode="Markdown")
+        await msg.answer(f"✅ Готово! Вот твоя ссылка:\n\n`{vless_link}`", parse_mode=ParseMode.MARKDOWN)
     except Exception as e:
-        await msg.answer(f"Ошибка: {e}")
-
+        await msg.answer(f"❌ Ошибка: {e}")
 
 async def main():
     try:
         await dp.start_polling(bot)
     finally:
         await xui.close()
-
 
 if __name__ == "__main__":
     asyncio.run(main())
