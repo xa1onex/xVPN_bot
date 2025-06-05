@@ -5,6 +5,7 @@ from aiogram import Bot, Dispatcher, types
 from aiogram.enums import ParseMode
 from aiogram.types import Message
 from aiogram.filters import Command
+from aiogram.client.default import DefaultBotProperties
 from aiogram.fsm.storage.memory import MemoryStorage
 
 # ==== CONFIG ====
@@ -98,7 +99,10 @@ class XUIClient:
         await self.session.close()
 
 
-bot = Bot(token=BOT_TOKEN, parse_mode=ParseMode.HTML)
+bot = Bot(
+    token=BOT_TOKEN,
+    default=DefaultBotProperties(parse_mode=ParseMode.HTML)
+)
 dp = Dispatcher(storage=MemoryStorage())
 xui = XUIClient(XUI_API_URL, XUI_USERNAME, XUI_PASSWORD)
 
