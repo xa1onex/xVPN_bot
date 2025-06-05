@@ -2,8 +2,9 @@ import asyncio
 import json
 import uuid
 import time
-from aiogram import Bot, Dispatcher, types
+from aiogram import Bot, Dispatcher, types, F
 from aiogram.enums import ParseMode
+from aiogram.types import Message
 from aiohttp import ClientSession
 
 # === НАСТРОЙКИ ===
@@ -11,13 +12,14 @@ BOT_TOKEN = '7675630575:AAGgtMDc4OARX9qG7M50JWX2l3CvgbmK5EY'
 XUI_API_URL = 'http://77.110.103.180:2053/xAzd5OTnVG/'
 XUI_USERNAME = 'admin'
 XUI_PASSWORD = 'admin'
-INBOUND_ID = 1  # ID твоего VLESS + Reality инбунда
+INBOUND_ID = 1
 
 # === Reality параметры ===
 REALITY_PUBLIC_KEY = '9Hdy5jR2MNBB-vxtu1bOl4SHpiLgTWlEqgDD8ZGf2hk'
 REALITY_SNI = 'yahoo.com'
 REALITY_SID = 'c5b0fb2c88'
-REALITY_SPX = '/'  # путь, обычно просто /
+REALITY_SPX = '/'
+
 
 class XUIClient:
     def __init__(self):
@@ -41,10 +43,9 @@ class XUIClient:
         async with self.session.get(get_url, headers=headers) as r:
             inbound = (await r.json())["obj"]
 
-        # Проверяем публичный IP
         server_ip = inbound["listen"]
         if server_ip in ["0.0.0.0", "127.0.0.1", "::"]:
-            server_ip = "77.110.103.180"  # ← сюда подставь свой внешний IP или домен
+            server_ip = "77.110.103.180"
 
         new_uuid = str(uuid.uuid4())
         client_data = {
@@ -89,12 +90,14 @@ bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 xui = XUIClient()
 
-@dp.message(commands=["start", "help"])
-async def welcome(msg: types.Message):
+
+@dp.message(F.text == "/start")
+async def welcome(msg: Message):
     await msg.answer("👋 Привет! Напиши /get, чтобы получить доступ к VPN.")
 
-@dp.message(commands=["get"])
-async def get_access(msg: types.Message):
+
+@dp.message(F.text == "/get")
+async def get_access(msg: Message):
     email = f"user_{msg.from_user.id}_{int(time.time())}"
     try:
         user_data = await xui.add_client(email)
@@ -109,6 +112,7 @@ async def get_access(msg: types.Message):
         await msg.answer(f"✅ Готово! Вот твоя ссылка:\n\n`{vless_link}`", parse_mode=ParseMode.MARKDOWN)
     except Exception as e:
         await msg.answer(f"❌ Ошибка: {e}")
+
 
 async def main():
     try:
