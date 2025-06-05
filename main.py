@@ -20,9 +20,7 @@ BOT_TOKEN = "7675630575:AAGgtMDc4OARX9qG7M50JWX2l3CvgbmK5EY"
 bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
 dp = Dispatcher()
 
-session = ClientSession(cookie_jar=CookieJar())
-
-async def login():
+async def login(session: ClientSession):
     url = f"{API_BASE}/login"
     payload = {"username": USERNAME, "password": PASSWORD}
     async with session.post(url, json=payload) as resp:
@@ -30,8 +28,8 @@ async def login():
         if not data["success"]:
             raise Exception("Login failed")
 
-async def add_user(email):
-    await login()
+async def add_user(session: ClientSession, email: str):
+    await login(session)
     user_id = str(uuid.uuid4())
     payload = {
         "id": None,
@@ -80,17 +78,22 @@ async def add_user(email):
         else:
             raise Exception("Failed to add user")
 
-@dp.message(F.text == "/get")
-async def get_vpn(message: Message):
-    try:
-        email = f"tg_{message.from_user.id}"
-        link = await add_user(email)
-        await message.answer(f"✅ Вот твоя ссылка:\n<code>{link}</code>")
-    except Exception as e:
-        await message.answer(f"❌ Ошибка: {e}")
-
 async def main():
-    await dp.start_polling(bot)
+    session = ClientSession(cookie_jar=CookieJar())
+
+    @dp.message(F.text == "/get")
+    async def get_vpn(message: Message):
+        try:
+            email = f"tg_{message.from_user.id}"
+            link = await add_user(session, email)
+            await message.answer(f"✅ Вот твоя ссылка:\n<code>{link}</code>")
+        except Exception as e:
+            await message.answer(f"❌ Ошибка: {e}")
+
+    try:
+        await dp.start_polling(bot)
+    finally:
+        await session.close()
 
 if __name__ == "__main__":
     asyncio.run(main())
