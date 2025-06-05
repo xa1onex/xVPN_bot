@@ -1,52 +1,69 @@
-from py3xui import Api
+from telegram import Update
+from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
+import requests
 import uuid
 
-# 📌 Настройки подключения
-host = "http://77.110.103.180:2053/xAzd5OTnVG/"
-username = "admin"
-password = "admin"
+# === Настройки ===
+BOT_TOKEN = '7675630575:AAGgtMDc4OARX9qG7M50JWX2l3CvgbmK5EY'
+PANEL_URL = 'http://77.110.103.180:2053/xAzd5OTnVG'
+USERNAME = 'admin'
+PASSWORD = 'admin'
 
-external_ip = "77.110.103.180"
-port = 443
-remark = "gmfvbot"  # отображается в ссылке
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Напиши /getvpn — выдам VLESS конфиг на твой ник.")
 
-# 🔐 Авторизация
-api = Api(host, username, password)
-api.login()
+async def getvpn(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user.username or "anon"
+    client_id = str(uuid.uuid4())
 
-# 🔁 Получаем inbound
-inbound_id = 1
-inbound = api.inbound.get_by_id(inbound_id)
+    # Авторизация
+    login = requests.post(f"{PANEL_URL}/login", json={
+        "username": USERNAME,
+        "password": PASSWORD
+    })
+    if not login.ok:
+        await update.message.reply_text("❌ Не удалось войти в панель.")
+        return
+    token = login.json()["data"]["token"]
+    headers = {"Authorization": token}
 
-# 🧑‍💻 Создаем нового клиента
-user_uuid = str(uuid.uuid4())
-telegram_id = "user_123456"  # Подставляй ID пользователя
-flow = "xtls-rprx-vision"
+    # Добавление пользователя
+    user_data = {
+        "enable": True,
+        "remark": f"tg_{user}",
+        "expiryTime": 0,
+        "listen": "",
+        "port": 0,
+        "protocol": "vless",
+        "settings": {
+            "clients": [
+                {"id": client_id, "flow": "", "email": f"{user}@tg"}
+            ]
+        },
+        "streamSettings": {
+            "network": "tcp"
+        },
+        "sniffing": {
+            "enabled": True,
+            "destOverride": ["http", "tls"]
+        }
+    }
 
-# ✅ Добавление клиента
-api.client.add(
-    inbound_id=inbound_id,
-    email=telegram_id,
-    enable=True,
-    total_gb=0,
-    expiry_time=0,
-    uuid=user_uuid,
-    flow=flow,
-)
+    res = requests.post(f"{PANEL_URL}/panel/inbound/add", json=user_data, headers=headers)
+    if not res.ok or not res.json().get("success"):
+        await update.message.reply_text("⚠️ Ошибка при создании пользователя.")
+        return
 
-# 🔗 Данные из Reality
-reality = inbound.stream_settings.reality_settings
-public_key = reality["settings"]["publicKey"]
-short_id = reality["shortIds"][0]
-sni = reality["serverNames"][0]
+    inbound = res.json()["data"]
+    port = inbound.get("port")
+    address = "77.110.103.180"
 
-# 🧩 Генерация VLESS-ссылки
-vless_link = (
-    f"vless://{user_uuid}@{external_ip}:{port}"
-    f"?type=tcp&security=reality"
-    f"&pbk={public_key}&fp=chrome"
-    f"&sni={sni}&sid={short_id}&spx=%2F"
-    f"&flow={flow}#{remark}-{telegram_id}"
-)
+    vless_link = f"vless://{client_id}@{address}:{port}?encryption=none&type=tcp#{user}"
 
-print("✅ VLESS-ссылка:\n", vless_link)
+    await update.message.reply_text(f"✅ Готово! Вот твой VLESS конфиг:\n\n`{vless_link}`", parse_mode="Markdown")
+
+app = ApplicationBuilder().token(BOT_TOKEN).build()
+app.add_handler(CommandHandler("start", start))
+app.add_handler(CommandHandler("getvpn", getvpn))
+
+app.run_polling()
