@@ -1,69 +1,33 @@
-from telegram import Update
-from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
-import requests
-import uuid
+from loader import bot, app_logger, scheduler
+import handlers  # noqa
+from telebot.custom_filters import StateFilter
+from datetime import datetime
+from utils.functions import run_migrations
+from utils.set_bot_commands import set_default_commands
+from database.models import create_models
+from config_data.config import ADMIN_ID
+from utils.tasks import check_and_revoke_keys, send_renewal_notifications
 
-# === Настройки ===
-BOT_TOKEN = '7675630575:AAGgtMDc4OARX9qG7M50JWX2l3CvgbmK5EY'
-PANEL_URL = 'http://77.110.103.180:2053/xAzd5OTnVG'
-USERNAME = 'admin'
-PASSWORD = 'admin'
+if __name__ == '__main__':
+    create_models()
+    app_logger.debug("Создание моделей...")
+    run_migrations()
+    app_logger.info("Запуск миграций...")
+    bot.add_custom_filter(StateFilter(bot))
+    set_default_commands(bot)
+    app_logger.info("Загрузка базовых команд...")
+    # Очистка всех задач
+    scheduler.remove_all_jobs()
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Напиши /getvpn — выдам VLESS конфиг на твой ник.")
+    # Запуск проверки каждые 5 минут
+    scheduler.add_job(check_and_revoke_keys, 'interval', minutes=5, next_run_time=datetime.now())
+    scheduler.start()
+    app_logger.info("Запущен планировщик для проверки подписки пользователей и отзыва ключей.")
 
-async def getvpn(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user.username or "anon"
-    client_id = str(uuid.uuid4())
+    # Каждые 8 часов отправляем уведомления о продлении ключей
+    # scheduler.add_job(send_renewal_notifications, 'interval', hours=8, args=[scheduler], next_run_time=datetime.now())
+    # app_logger.info("Запущен планировщик для продления ключей.")
 
-    # Авторизация
-    login = requests.post(f"{PANEL_URL}/login", json={
-        "username": USERNAME,
-        "password": PASSWORD
-    })
-    if not login.ok:
-        await update.message.reply_text("❌ Не удалось войти в панель.")
-        return
-    token = login.json()["data"]["token"]
-    headers = {"Authorization": token}
-
-    # Добавление пользователя
-    user_data = {
-        "enable": True,
-        "remark": f"tg_{user}",
-        "expiryTime": 0,
-        "listen": "",
-        "port": 0,
-        "protocol": "vless",
-        "settings": {
-            "clients": [
-                {"id": client_id, "flow": "", "email": f"{user}@tg"}
-            ]
-        },
-        "streamSettings": {
-            "network": "tcp"
-        },
-        "sniffing": {
-            "enabled": True,
-            "destOverride": ["http", "tls"]
-        }
-    }
-
-    res = requests.post(f"{PANEL_URL}/panel/inbound/add", json=user_data, headers=headers)
-    if not res.ok or not res.json().get("success"):
-        await update.message.reply_text("⚠️ Ошибка при создании пользователя.")
-        return
-
-    inbound = res.json()["data"]
-    port = inbound.get("port")
-    address = "77.110.103.180"
-
-    vless_link = f"vless://{client_id}@{address}:{port}?encryption=none&type=tcp#{user}"
-
-    await update.message.reply_text(f"✅ Готово! Вот твой VLESS конфиг:\n\n`{vless_link}`", parse_mode="Markdown")
-
-app = ApplicationBuilder().token(BOT_TOKEN).build()
-app.add_handler(CommandHandler("start", start))
-app.add_handler(CommandHandler("getvpn", getvpn))
-
-app.run_polling()
+    app_logger.info(f"Бот @{bot.get_me().username} запущен.")
+    bot.send_message(ADMIN_ID, "Бот запущен.")
+    bot.infinity_polling()
