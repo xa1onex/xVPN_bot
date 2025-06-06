@@ -17,16 +17,9 @@ from aiogram.filters import Command, CommandStart, CommandObject
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, BufferedInputFile, FSInputFile, Message
 from aiogram.utils.deep_linking import create_start_link
-from aiogram.utils.payload import decode_payload
-from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
 from aiohttp import web
 from telegram.error import RetryAfter
-from yookassa import Payment
-from yookassa.domain.notification import WebhookNotification
-
 import celery_worker
-from headers import ADMINS, router, DATETIME_FORMAT, tz, K_remind, WEBHOOK_PATH, BASE_WEBHOOK_URL, PAYMENT_WEBHOOK_PATH, \
-    mode, API_TOKEN, WEBHOOK_SSL_CERT, WEBHOOK_SSL_PRIV, WEBAPP_HOST, WEBAPP_PORT, ACTIVE_COUNT_SUB_LIMIT
 from keyboards import *
 from manager import *
 from panel_3xui import login, add_client, get_client_url, continue_client
@@ -190,7 +183,6 @@ async def send_welcome(message: types.Message, command: CommandObject = None):
 
     # Проверка реферала
     if command and command.args:
-        reference = str(decode_payload(command.args))
         if reference != str(user_id):
             referral = reference
 
@@ -219,7 +211,6 @@ async def get_sub(call: CallbackQuery, state: FSMContext):
 @router.callback_query(F.data == 'get_sub')
 async def get_sub(call: CallbackQuery, state: FSMContext):
     user_sale = int(get_user_data(call.from_user.id).get('sale', 0))
-    if TEST_PAYMETNS is not True or str(call.from_user.id) in ADMINS:
         await call.message.answer(text=get_subs_message(user_sale)[0], reply_markup=get_subs_keyboard(user_sale)[0])
         await call.message.answer(text=get_subs_message(user_sale)[1], reply_markup=get_subs_keyboard(user_sale)[1])
     else:
@@ -232,7 +223,6 @@ async def get_sub(call: CallbackQuery, state: FSMContext):
 async def buy_sub(message: types.Message, state: FSMContext):
     user_id = message.from_user.id
     user_sale = int(get_user_data(message.from_user.id).get('sale', 0))
-    if TEST_PAYMETNS is not True or str(user_id) in ADMINS:
         await bot.send_message(chat_id=user_id, text=get_subs_message(user_sale)[0],
                                reply_markup=get_subs_keyboard(user_sale)[0])
         await bot.send_message(chat_id=user_id, text=get_subs_message(user_sale)[1],
@@ -291,19 +281,15 @@ async def get_info(call: CallbackQuery, state: FSMContext):
                     byte_arr = get_qr_code(config_url)
                     # Высылаем данные пользователю
                     await bot.send_photo(user_id, photo=BufferedInputFile(file=byte_arr.read(), filename="qrcode.png"),
-                                         caption=get_success_pay_message(config_url),
-                                         reply_markup=get_success_pay_keyboard())
     except Exception:
         await wakeup_admins(f"Ошибка отправки данных пользователю panel_uuid={call.data[9:]} {call.from_user.id=}")
         traceback.print_exc()
 
 
 # Сохранение данных о подписке
-async def save_subscription(user_id, payment, notification, datetime_expire, panel_uuid, try_period=False):
     """
     :param try_period:
     :param user_id:
-    :param payment:
     :param notification:
     :param datetime_expire:
     :param panel_uuid:
@@ -316,8 +302,6 @@ async def save_subscription(user_id, payment, notification, datetime_expire, pan
                 'try_period': True if try_period else False,
                 'subscriptions': [
                     {
-                        'payment_id': notification.object.id if try_period is False else '-',
-                        'subscription': payment['subscription'] if try_period is False else 'try_period',
                         'datetime_operation': datetime.now(tz).strftime(DATETIME_FORMAT),
                         'datetime_expire': datetime_expire.strftime(DATETIME_FORMAT),
                         'panel_uuid': panel_uuid,
@@ -329,8 +313,6 @@ async def save_subscription(user_id, payment, notification, datetime_expire, pan
             user_data['try_period'] = True if try_period else user_data['try_period']
             user_data['subscriptions'].append(
                 {
-                    'payment_id': notification.object.id if try_period is False else '-',
-                    'subscription': payment['subscription'] if try_period is False else 'try_period',
                     'datetime_operation': datetime.now(tz).strftime(DATETIME_FORMAT),
                     'datetime_expire': datetime_expire.strftime(DATETIME_FORMAT),
                     'panel_uuid': panel_uuid,
@@ -378,8 +360,6 @@ async def process_try_period(call: CallbackQuery, state: FSMContext):
             byte_arr = get_qr_code(config_url)
             # Высылаем данные пользователю
             await bot.send_photo(user_id, photo=BufferedInputFile(file=byte_arr.read(), filename="qrcode.png"),
-                                 caption=get_success_pay_message(config_url),
-                                 reply_markup=get_success_pay_keyboard())
         await state.clear()
     except Exception:
         await wakeup_admins(f"Ошибка cоздания триальной подписки {call.from_user.id=}")
@@ -396,7 +376,6 @@ async def continue_subscribe(call: CallbackQuery, state: FSMContext):
     :return:
     """
     try:
-        if TEST_PAYMETNS is True and str(call.from_user.id) not in ADMINS:
             await bot.send_message(call.from_user.id, text=get_service_working_message())
             return
 
@@ -413,7 +392,6 @@ async def continue_subscribe(call: CallbackQuery, state: FSMContext):
 
         if subscription:
             fin_price = str(int(subscription['price'] * (100 - int(user_data['sale'])) / 100))
-            payment = Payment.create({
                 "amount": {
                     "value": fin_price,
                     "currency": "RUB"
@@ -426,8 +404,6 @@ async def continue_subscribe(call: CallbackQuery, state: FSMContext):
                 "description": subscription['name']
             }, uuid.uuid4())
 
-            add_payment(
-                payment.id,
                 {
                     'user_id': call.from_user.id,
                     'subscription': call.data,
@@ -437,8 +413,6 @@ async def continue_subscribe(call: CallbackQuery, state: FSMContext):
                 }
             )
 
-            await call.message.answer(text=get_pay_message(user_data['sale']),
-                                      reply_markup=get_pay_keyboard(fin_price, payment.confirmation.confirmation_url))
         else:
             await call.message.answer("Неверная команда. Напишите /start")
         await state.clear()
@@ -459,7 +433,6 @@ async def process_subscribe(call: CallbackQuery, state: FSMContext):
     try:
         user_id = call.from_user.id
 
-        if TEST_PAYMETNS is True and str(user_id) not in ADMINS:
             await bot.send_message(user_id, text=get_service_working_message())
             return
 
@@ -474,7 +447,6 @@ async def process_subscribe(call: CallbackQuery, state: FSMContext):
 
             fin_price = str(int(subscription['price'] * (100 - int(user_data['sale'])) / 100))
 
-            payment = Payment.create({
                 "amount": {
                     "value": fin_price,
                     "currency": "RUB"
@@ -487,8 +459,6 @@ async def process_subscribe(call: CallbackQuery, state: FSMContext):
                 "description": subscription['name']
             }, uuid.uuid4())
 
-            add_payment(
-                payment.id,
                 {
                     'user_id': call.from_user.id,
                     'subscription': call.data,
@@ -498,8 +468,6 @@ async def process_subscribe(call: CallbackQuery, state: FSMContext):
                 }
             )
 
-            await call.message.answer(text=get_pay_message(user_data['sale']), reply_markup=get_pay_keyboard(fin_price,
-                                                                                                             payment.confirmation.confirmation_url))
         else:
             await call.message.answer("Неверная команда. Напишите /start")
         await state.clear()
@@ -509,11 +477,9 @@ async def process_subscribe(call: CallbackQuery, state: FSMContext):
 
 
 # Создание нового клиента в 3xui
-async def create_new_client(user_id, payment, notification):
     """
 
     :param user_id:
-    :param payment:
     :param notification:
     :return:
     """
@@ -522,8 +488,6 @@ async def create_new_client(user_id, payment, notification):
 
         # Добавляем в 3x-ui
         api = login()
-        user_delta = subscriptions[payment['subscription']]['period']
-        devices_count = subscriptions[payment['subscription']]['devices']
         logging.info(f"User (id: {panel_uuid}) was created.")
         add_client(api, panel_uuid, devices_count, user_delta)
 
@@ -535,10 +499,6 @@ async def create_new_client(user_id, payment, notification):
         datetime_remind = datetime.now(tz) + user_delta * K_remind
 
         # Записываем в users.json
-        await save_subscription(user_id, payment, notification, datetime_expire, panel_uuid)
-
-        remove_payment(notification.object.id)
-
         # Отключаем подписку, через user_delta
         celery_worker.cancel_subscribtion.apply_async((user_id, panel_uuid), eta=datetime_expire)
 
@@ -549,26 +509,20 @@ async def create_new_client(user_id, payment, notification):
         byte_arr = get_qr_code(config_url)
         # Высылаем данные пользователю
         await bot.send_photo(user_id, photo=BufferedInputFile(file=byte_arr.read(), filename="qrcode.png"),
-                             caption=get_success_pay_message(config_url),
-                             reply_markup=get_success_pay_keyboard())
     except Exception as e:
         await wakeup_admins(f"Ошибка при создании клиента {user_id=} {notification.object.id=}")
         traceback.print_exc()
 
 
 # Продление клиента в 3xui
-async def conti_client(user_id, payment, notification):
     """
 
     :param user_id:
-    :param payment:
     :param notification:
     :return:
     """
     try:
         user_data = get_user_data(user_id)
-        user_delta = subscriptions[payment['subscription']]['period']
-        panel_uuid = payment['panel_uuid']
         for sub in user_data['subscriptions']:
             if sub['panel_uuid'] == panel_uuid:
                 new_datetime_expire = datetime.strptime(sub['datetime_expire'], DATETIME_FORMAT).date() + user_delta
@@ -578,12 +532,9 @@ async def conti_client(user_id, payment, notification):
                 # Продлеваем в 3x-ui
                 api = login()
                 continue_client(api, panel_uuid, new_datetime_expire)
-                sub['payment_id'] = notification.object.id
                 sub['datetime_expire'] = new_datetime_expire.strftime(DATETIME_FORMAT)
 
                 save_user(user_id, user_data)
-
-                remove_payment(notification.object.id)
 
                 # Отключаем подписку, через user_delta
                 celery_worker.cancel_subscribtion.apply_async((user_id, panel_uuid), eta=new_datetime_expire)
@@ -601,65 +552,33 @@ async def conti_client(user_id, payment, notification):
         traceback.print_exc()
 
 
-# Обработчик webhook для платежной системы
-async def payment_webhook_handler(request):
     try:
         data = await request.json()
-        notification = WebhookNotification(data)
-        if notification.event == 'payment.succeeded':
-            logging.info(f"Payment succeeded for payment id: {notification.object.id}")
-
-            payment = get_payment(notification.object.id)
-            if payment is None:
                 return web.Response(status=200)
 
-            user_id = payment['user_id']
-            payments = get_user_payments(user_id)
-
-            if payments is not None and notification.object.id in payments:
                 return web.Response(status=200)
 
-            if payment['creation'] is True:
                 # Создаём нового клиента
-                await create_new_client(user_id, payment, notification)
-
                 # Вознаграждаем реферала
                 user_data = get_user_data(user_id)
                 await referral_reward(user_data['referral'])
                 user_data['referral'] = ""
                 save_user(user_id, user_data)
 
-            elif payment['continuation'] is True:
                 # Продлеваем клиента
-                await conti_client(user_id, payment, notification)
-
             return web.Response(status=200)
 
-        elif notification.event == 'payment.canceled':
-            logging.info(f"Payment canceled for payment id: {notification.object.id}")
-
-            payment = get_payment(notification.object.id)
-            if payment is None:
                 return web.Response(status=200)
 
-            user_id = payment['user_id']
-            payments = get_user_payments(user_id)
-
-            if payments is not None and notification.object.id in payments:
                 return web.Response(status=200)
 
-            sub = payment['subscription']
             sub_name = subscriptions[sub]['name']
             try:
-                await bot.send_message(user_id, get_canceled_pay_message(),
-                                       reply_markup=get_canceled_pay_keyboard(sub_name, sub))
             except Exception as e:
                 if 'bot was blocked by the user' in str(e):
                     pass
                 else:
                     raise
-
-            remove_payment(notification.object.id)
 
             return web.Response(status=200)
 
@@ -667,8 +586,6 @@ async def payment_webhook_handler(request):
             print('Unrecognized event type')
     except Exception as e:
         traceback.print_exc()
-        await wakeup_admins(f"Ошибка обработки webhook: {str(e)}")
-        logging.error(f"Error processing payment webhook: {str(e)}")
         return web.Response(status=500)
 
 
@@ -742,16 +659,10 @@ async def yandex_verification(request):
 
 
 async def on_startup(bot: Bot) -> None:
-    webhook_url = f"{BASE_WEBHOOK_URL}{WEBHOOK_PATH}"
-    webhook_info = await bot.get_webhook_info()
-    if webhook_info.url != webhook_url:
-        await bot.set_webhook(
-            url=webhook_url,
         )
 
 
 async def local_startup(bot: Bot) -> None:
-    await bot.delete_webhook()
     time.sleep(3)
     await dp.start_polling(bot)
 
@@ -769,13 +680,11 @@ if __name__ == '__main__':
         # Локальный запуск бота
         asyncio.run(local_startup(bot))
     else:
-        router.message.middleware(ThrottlingMiddleware(redis.Redis(host='localhost', port=6379, db=1)))
         dp.include_router(router)
 
         dp.startup.register(on_startup)
 
         app = web.Application()
-        app.router.add_post(PAYMENT_WEBHOOK_PATH, payment_webhook_handler)
         app.router.add_get('/user_agreement', user_agreement)
 
         # Страница лендинг
@@ -787,19 +696,13 @@ if __name__ == '__main__':
         # Яндекс проверка
         # app.router.add_get('/', yandex_verification)
 
-        webhook_requests_handler = SimpleRequestHandler(
             dispatcher=dp,
             bot=bot,
         )
-        # Register webhook handler on application
-        webhook_requests_handler.register(app, path=WEBHOOK_PATH)
-
         # Mount dispatcher startup and shutdown hooks to aiohttp application
         setup_application(app, dp, bot=bot)
 
         # Generate SSL context
         context = ssl.SSLContext(ssl.PROTOCOL_TLSv1_2)
-        context.load_cert_chain(WEBHOOK_SSL_CERT, WEBHOOK_SSL_PRIV)
-
         # And finally start webserver
         web.run_app(app, host=WEBAPP_HOST, port=WEBAPP_PORT, ssl_context=context)

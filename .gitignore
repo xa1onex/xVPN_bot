@@ -1,7 +1,0 @@
-/.env
-/data_files/users.json
-/data_files/payments.json
-/.venv/
-*.log
-/logs/
-/logs

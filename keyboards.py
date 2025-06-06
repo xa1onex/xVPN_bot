@@ -2,7 +2,6 @@ import telebot
 from aiogram import types
 from aiogram.types import InlineKeyboardMarkup
 
-from headers import TEST_PAYMETNS
 from subscriptions import subscriptions
 
 
@@ -80,7 +79,6 @@ def get_subs_keyboard(sale: int = 0):
     return [
         InlineKeyboardMarkup(inline_keyboard=[[month_1], [month_2], [month_3]]),
         InlineKeyboardMarkup(inline_keyboard=[[year_1], [year_2], [year_3]])
-    ] if not TEST_PAYMETNS else [
         InlineKeyboardMarkup(inline_keyboard=[[testday_1]]),
         InlineKeyboardMarkup(inline_keyboard=[])
     ]
@@ -88,20 +86,17 @@ def get_subs_keyboard(sale: int = 0):
 
 # Блок оплаты
 
-def get_pay_message(sale):
     return f"""
 🛍️ Отлично! Вот ваша ссылка на оплату: ✨
 {f'Ваша скидка: {sale}%' if sale > 0 else ''}"""
 
 
-def get_pay_keyboard(amount, url):
     button1 = types.InlineKeyboardButton(text=f"Оплатить {amount}₽", url=url)
     return InlineKeyboardMarkup(inline_keyboard=[[button1]])
 
 
 # Успешная оплата
 
-def get_success_pay_message(config_url):
     return f"""
 ✅ Супер! Вот ваши данные для VPN подключения: 🌐
 
@@ -110,20 +105,17 @@ def get_success_pay_message(config_url):
 Спасибо за выбор Kovanoff VPN 🍀"""
 
 
-def get_success_pay_keyboard():
     button1 = types.InlineKeyboardButton(text="Инструкция для всех платформ", callback_data="instruction")
     return InlineKeyboardMarkup(inline_keyboard=[[button1]])
 
 
 # Отмена оплаты
 
-def get_canceled_pay_message():
     return f"""
 ❌ Упс! оплата не прошла, попробуйте снова:
 """
 
 
-def get_canceled_pay_keyboard(again_text, again_callback):
     button1 = types.InlineKeyboardButton(text=again_text, callback_data=again_callback)
     return InlineKeyboardMarkup(inline_keyboard=[[button1]])
 
