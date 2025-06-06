@@ -343,43 +343,51 @@ def setup_server(server_obj: Server) -> bool:
         return False
 
 
+
+
 def generate_key(server_obj: Server) -> VPNKey | None:
-    """
-    Генерирует новый VPN ключ для сервера.
-
-    Алгоритм:
-      1. Генерация уникального UUID для клиента.
-      2. Обновление конфигурации Xray на сервере с помощью утилиты jq (добавление нового клиента в список).
-      3. Перезапуск службы Xray.
-      4. Формирование VLESS-ссылки с параметрами Xray Reality.
-      5. Генерация QR-кода для VLESS-ссылки.
-      6. Создание записи VPNKey в базе данных.
-
-    :param server_obj: объект Server.
-    :return: объект VPNKey с рабочей VLESS‑ссылкой и путем к QR‑коду, либо None при ошибке.
-    """
     try:
-        # Шаг 1. Генерация UUID для нового клиента
         client_uuid = str(uuid.uuid4())
         app_logger.info(f"Сгенерирован новый UUID для клиента: {client_uuid}")
 
-        # Шаг 2. Обновление конфигурации Xray через jq
-        update_cmd = (
-            f'echo {DEFAULT_SERVER_PASSWORD} | sudo -S sh -c '
-            f'"jq \'.inbounds[0].settings.clients += [{{\\"id\\": \\"{client_uuid}\\", '
-            f'\\"flow\\": \\"xtls-rprx-vision\\"}}]\' {XRAY_CONFIG_PATH} > {XRAY_CONFIG_PATH}.tmp && '
-            f'mv {XRAY_CONFIG_PATH}.tmp {XRAY_CONFIG_PATH}"'
-        )
-        update_output = execute_ssh_command(
+        # 1. Скачиваем конфиг
+        config_content = execute_ssh_command(
             ip=server_obj.ip_address,
             username=DEFAULT_SERVER_USER,
             password=DEFAULT_SERVER_PASSWORD,
-            command=update_cmd,
+            command=f"cat {XRAY_CONFIG_PATH}",
             timeout=30
         )
-        app_logger.info(f"Конфигурация Xray обновлена. Вывод: {update_output}")
+        config_json = json.loads(config_content)
 
-        # Шаг 3. Перезапуск службы Xray
+        # 2. Добавляем нового клиента
+        new_client = {
+            "id": client_uuid,
+            "flow": "xtls-rprx-vision"
+        }
+        clients = config_json["inbounds"][0]["settings"].get("clients", [])
+        clients.append(new_client)
+        config_json["inbounds"][0]["settings"]["clients"] = clients
+
+        # 3. Сохраняем обновлённый конфиг локально
+        local_tmp_path = "/tmp/xray_config_updated.json"
+        with open(local_tmp_path, "w") as f:
+            json.dump(config_json, f, indent=2)
+
+        # 4. Загружаем обратно на сервер (надо реализовать upload_file_to_server)
+        upload_result = upload_file_to_server(
+            local_path=local_tmp_path,
+            remote_path=XRAY_CONFIG_PATH,
+            server_ip=server_obj.ip_address,
+            username=DEFAULT_SERVER_USER,
+            password=DEFAULT_SERVER_PASSWORD
+        )
+        if not upload_result:
+            app_logger.error("Не удалось загрузить обновленный конфиг на сервер")
+            return None
+        app_logger.info("Конфигурация Xray обновлена успешно")
+
+        # 5. Перезапускаем службу Xray
         restart_cmd = f'echo {DEFAULT_SERVER_PASSWORD} | sudo -S systemctl restart xray'
         restart_output = execute_ssh_command(
             ip=server_obj.ip_address,
@@ -390,47 +398,34 @@ def generate_key(server_obj: Server) -> VPNKey | None:
         )
         app_logger.info(f"Служба Xray перезапущена. Вывод: {restart_output}")
 
-        # Шаг 4. Формирование VLESS-ссылки
-        # Получаем данные из конфиг файла
-        config_content = execute_ssh_command(
-            ip=server_obj.ip_address,
-            username=DEFAULT_SERVER_USER,
-            password=DEFAULT_SERVER_PASSWORD,
-            command=f"cat {XRAY_CONFIG_PATH}",
-            timeout=30
-        )
-        try:
-            config_json = json.loads(config_content)
-            # Извлекаем данные из секции realitySettings во втором inbound (индекс 1)
-            reality_settings = config_json["inbounds"][0]["streamSettings"]["realitySettings"]
-            # Предполагаем, что в конфиге теперь есть оба параметра: publicKey и serverNames
-            server_name = reality_settings.get("serverNames", [None])[0]
-            public_key = server_obj.public_key
-            short_id = random.choice(reality_settings["shortIds"])
-            if not server_name or not public_key or not short_id:
-                raise ValueError("Недостаточно параметров Xray Reality в конфиге.")
-        except Exception as e:
-            app_logger.error(f"Ошибка при парсинге конфигурационного файла: {e}")
+        # 6. Формируем VLESS ссылку с параметрами из realitySettings
+        inbound = config_json["inbounds"][0]
+        stream_settings = inbound.get("streamSettings", {})
+        reality_settings = stream_settings.get("realitySettings")
+        if not reality_settings:
+            app_logger.error("Недостаточно параметров Xray Reality в конфиге.")
+            return None
+
+        server_name = reality_settings.get("serverNames", [None])[0]
+        public_key = server_obj.public_key
+        short_id = random.choice(reality_settings.get("shortIds", []))
+        if not server_name or not public_key or not short_id:
+            app_logger.error("Недостаточно параметров Xray Reality для формирования ссылки.")
             return None
 
         vless_link = (
             f"vless://{client_uuid}@{server_obj.ip_address}:443?"
-            f"security=reality&"
-            f"encryption=none&"
-            f"flow=xtls-rprx-vision&"
-            f"type=tcp&"
-            f"fp={XRAY_REALITY_FINGERPRINT}&"
-            f"sni={server_name}&"
-            f"pbk={public_key}&"
-            f"sid={short_id}#GuardVPN"
+            f"security=reality&encryption=none&flow=xtls-rprx-vision&"
+            f"type=tcp&fp={XRAY_REALITY_FINGERPRINT}&"
+            f"sni={server_name}&pbk={public_key}&sid={short_id}#GuardVPN"
         )
         app_logger.info(f"Сформирована VLESS ссылка: {vless_link}")
 
-
-        # Шаг 5. Генерация QR-кода
+        # 7. Генерируем QR код
         key_number = len(server_obj.keys) + 1 if hasattr(server_obj, "keys") else 1
         qr_code_filename = f"vpn_key_{server_obj.id}_{key_number}.png"
         qr_code_path = os.path.join(QR_CODE_DIR, qr_code_filename)
+
         qr = qrcode.QRCode(
             version=1,
             error_correction=qrcode.constants.ERROR_CORRECT_H,
@@ -443,7 +438,7 @@ def generate_key(server_obj: Server) -> VPNKey | None:
         img.save(qr_code_path)
         app_logger.info(f"QR-код сгенерирован и сохранён по пути: {qr_code_path}")
 
-        # Шаг 6. Создание записи VPNKey в БД с использованием peewee.
+        # 8. Создаём запись VPNKey в базе
         vpn_key = VPNKey.create(
             server=server_obj,
             name=f"VPN Key {server_obj.location} #{key_number}",
@@ -452,7 +447,9 @@ def generate_key(server_obj: Server) -> VPNKey | None:
             is_valid=True
         )
         app_logger.info(f"VPN ключ успешно создан: {vpn_key.key}")
+
         return vpn_key
+
     except Exception as ex:
         app_logger.error(f"Ошибка при генерации VPN ключа для сервера {server_obj.location}: {ex}")
         return None
