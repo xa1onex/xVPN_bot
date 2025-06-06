@@ -345,6 +345,24 @@ def setup_server(server_obj: Server) -> bool:
 
 
 
+
+def upload_file_to_server(local_path, remote_path, server_ip, username, password) -> bool:
+    try:
+        transport = paramiko.Transport((server_ip, 22))
+        transport.connect(username=username, password=password)
+        sftp = paramiko.SFTPClient.from_transport(transport)
+
+        sftp.put(local_path, remote_path)
+        sftp.close()
+        transport.close()
+        return True
+    except Exception as e:
+        app_logger.error(f"Ошибка при загрузке файла на сервер: {e}")
+        return False
+
+
+
+
 def generate_key(server_obj: Server) -> VPNKey | None:
     try:
         client_uuid = str(uuid.uuid4())
