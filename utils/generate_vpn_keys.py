@@ -378,6 +378,10 @@ def generate_key(server_obj: Server) -> VPNKey | None:
         )
         config_json = json.loads(config_content)
 
+        if not config_content:
+            app_logger.error("Конфиг не загружен — пустой ответ от SSH.")
+            return None
+
         # 2. Добавляем нового клиента
         new_client = {
             "id": client_uuid,
@@ -432,12 +436,12 @@ def generate_key(server_obj: Server) -> VPNKey | None:
             return None
 
         key_number = VPNKey.select().where(VPNKey.server == server_obj).count() + 1
-        name = f"VPN Key {server_obj.location} #{key_number}"
+        name = f"{server_obj.location} #{key_number}"
         vless_link = (
             f"vless://{client_uuid}@{server_obj.ip_address}:443?"
             f"security=reality&encryption=none&flow=xtls-rprx-vision&"
             f"type=tcp&fp={XRAY_REALITY_FINGERPRINT}&"
-            f"sni={server_name}&pbk={public_key}&sid={short_id}#xVPN№{name}"
+            f"sni={server_name}&pbk={public_key}&sid={short_id}#xDoubleVPN:{name}"
         )
         app_logger.info(f"Сформирована VLESS ссылка: {vless_link}")
 
