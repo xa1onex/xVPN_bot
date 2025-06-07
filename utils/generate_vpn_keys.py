@@ -431,11 +431,13 @@ def generate_key(server_obj: Server) -> VPNKey | None:
             app_logger.error("Недостаточно параметров Xray Reality для формирования ссылки.")
             return None
 
+        key_number = VPNKey.select().where(VPNKey.server == server_obj).count() + 1
+        name = f"VPN Key {server_obj.location} #{key_number}"
         vless_link = (
             f"vless://{client_uuid}@{server_obj.ip_address}:443?"
             f"security=reality&encryption=none&flow=xtls-rprx-vision&"
             f"type=tcp&fp={XRAY_REALITY_FINGERPRINT}&"
-            f"sni={server_name}&pbk={public_key}&sid={short_id}#GuardVPN"
+            f"sni={server_name}&pbk={public_key}&sid={short_id}#xVPN№{name}"
         )
         app_logger.info(f"Сформирована VLESS ссылка: {vless_link}")
 
