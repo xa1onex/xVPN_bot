@@ -3,7 +3,7 @@ from i18n_middleware import _
 
 
 def get_apps_murkup():
-    """ Inline buttons для выдачи ссылок на скачивание приложений """
+    """ Inline buttons для выдачи ссылок на скачивание приложений1"""
     actions = InlineKeyboardMarkup(row_width=3)
 
     actions.add(InlineKeyboardButton(text="Windows", url="https://github.com/hiddify/hiddify-next/releases/"
