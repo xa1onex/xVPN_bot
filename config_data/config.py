@@ -9,10 +9,10 @@ else:
 
 BOT_TOKEN = os.getenv('BOT_TOKEN')
 DEFAULT_COMMANDS = (
-    ('start', "Запустить бота"),
-    ('help', "Вывести справку"),
-    ('location', "Выбрать сервера для подключения"),
-    ('instruction', "Запросить инструкцию для подключения VPN"),
+    ('start', "Перезапустить"),
+    ('help', "Помощь"),
+    ('location', "Выбрать сервер"),
+    ('instruction', "Инструкция для подключения VPN"),
     ('panel', "Панель управления")
 )
 ADMIN_COMMANDS = (

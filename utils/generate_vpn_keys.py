@@ -378,10 +378,6 @@ def generate_key(server_obj: Server) -> VPNKey | None:
         )
         config_json = json.loads(config_content)
 
-        if not config_content:
-            app_logger.error("Конфиг не загружен — пустой ответ от SSH.")
-            return None
-
         # 2. Добавляем нового клиента
         new_client = {
             "id": client_uuid,
